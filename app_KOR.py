@@ -186,7 +186,8 @@ Guidelines:
 OUTPUT_TOKEN_INFO = {
     "claude-3-5-sonnet-latest": {"max_tokens": 8192},
     "claude-3-5-haiku-latest": {"max_tokens": 8192},
-    "claude-3-7-sonnet-latest": {"max_tokens": 64000},
+    "claude-sonnet-4-20250514": {"max_tokens": 64000},
+    "claude-opus-4-20250514": {"max_tokens": 32000},
     "gpt-4o": {"max_tokens": 16000},
     "gpt-4o-mini": {"max_tokens": 16000},
 }
@@ -198,7 +199,9 @@ if "session_initialized" not in st.session_state:
     st.session_state.history = []  # 대화 기록 저장 리스트
     st.session_state.mcp_client = None  # MCP 클라이언트 객체 저장 공간
     st.session_state.timeout_seconds = 120  # 응답 생성 제한 시간(초), 기본값 120초
-    st.session_state.selected_model = "claude-3-7-sonnet-latest"  # 기본 모델 선택
+    st.session_state.selected_model = (
+        "claude-opus-4-20250514"  # 기본 모델 선택
+    )
     st.session_state.recursion_limit = 100  # 재귀 호출 제한, 기본값 100
 
 if "thread_id" not in st.session_state:
@@ -446,7 +449,8 @@ async def initialize_session(mcp_config=None):
         selected_model = st.session_state.selected_model
 
         if selected_model in [
-            "claude-3-7-sonnet-latest",
+            "claude-opus-4-20250514",
+            "claude-sonnet-4-20250514",
             "claude-3-5-sonnet-latest",
             "claude-3-5-haiku-latest",
         ]:
@@ -485,7 +489,8 @@ with st.sidebar:
     if has_anthropic_key:
         available_models.extend(
             [
-                "claude-3-7-sonnet-latest",
+                "claude-opus-4-20250514",
+                "claude-sonnet-4-20250514",
                 "claude-3-5-sonnet-latest",
                 "claude-3-5-haiku-latest",
             ]
@@ -502,13 +507,26 @@ with st.sidebar:
             "⚠️ API 키가 설정되지 않았습니다. .env 파일에 ANTHROPIC_API_KEY 또는 OPENAI_API_KEY를 추가해주세요."
         )
         # 기본값으로 Claude 모델 추가 (키가 없어도 UI를 보여주기 위함)
-        available_models = ["claude-3-7-sonnet-latest"]
+        available_models = ["claude-opus-4-20250514"]
+
+    # 사용자 친화적인 모델 표시 매핑 생성
+    model_display_mapping = {
+        "claude-opus-4-20250514": "Claude Opus 4 (최고 성능)",
+        "claude-sonnet-4-20250514": "Claude Sonnet 4 (고성능)",
+        "claude-3-5-sonnet-latest": "Claude 3.5 Sonnet (최신)",
+        "claude-3-5-haiku-latest": "Claude 3.5 Haiku (최고속)",
+        "gpt-4o": "GPT-4o",
+        "gpt-4o-mini": "GPT-4o Mini"
+    }
+
+    # 드롭다운용 표시 옵션 생성
+    model_display_options = [model_display_mapping.get(model, model) for model in available_models]
 
     # 모델 선택 드롭다운
     previous_model = st.session_state.selected_model
-    st.session_state.selected_model = st.selectbox(
+    selected_display_name = st.selectbox(
         "🤖 사용할 모델 선택",
-        options=available_models,
+        options=model_display_options,
         index=(
             available_models.index(st.session_state.selected_model)
             if st.session_state.selected_model in available_models
@@ -516,6 +534,9 @@ with st.sidebar:
         ),
         help="Anthropic 모델은 ANTHROPIC_API_KEY가, OpenAI 모델은 OPENAI_API_KEY가 환경변수로 설정되어야 합니다.",
     )
+    
+    # 기술적 모델명으로 다시 변환
+    st.session_state.selected_model = available_models[model_display_options.index(selected_display_name)]
 
     # 모델이 변경되었을 때 세션 초기화 필요 알림
     if (

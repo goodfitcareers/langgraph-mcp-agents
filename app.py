@@ -186,7 +186,8 @@ Guidelines:
 OUTPUT_TOKEN_INFO = {
     "claude-3-5-sonnet-latest": {"max_tokens": 8192},
     "claude-3-5-haiku-latest": {"max_tokens": 8192},
-    "claude-3-7-sonnet-latest": {"max_tokens": 64000},
+    "claude-sonnet-4-20250514": {"max_tokens": 64000},
+    "claude-opus-4-20250514": {"max_tokens": 32000},
     "gpt-4o": {"max_tokens": 16000},
     "gpt-4o-mini": {"max_tokens": 16000},
 }
@@ -201,7 +202,7 @@ if "session_initialized" not in st.session_state:
         120  # Response generation time limit (seconds), default 120 seconds
     )
     st.session_state.selected_model = (
-        "claude-3-7-sonnet-latest"  # Default model selection
+        "claude-opus-4-20250514"  # Default model selection
     )
     st.session_state.recursion_limit = 100  # Recursion call limit, default 100
 
@@ -458,7 +459,8 @@ async def initialize_session(mcp_config=None):
         selected_model = st.session_state.selected_model
 
         if selected_model in [
-            "claude-3-7-sonnet-latest",
+            "claude-opus-4-20250514",
+            "claude-sonnet-4-20250514",
             "claude-3-5-sonnet-latest",
             "claude-3-5-haiku-latest",
         ]:
@@ -497,7 +499,8 @@ with st.sidebar:
     if has_anthropic_key:
         available_models.extend(
             [
-                "claude-3-7-sonnet-latest",
+                "claude-opus-4-20250514",
+                "claude-sonnet-4-20250514",
                 "claude-3-5-sonnet-latest",
                 "claude-3-5-haiku-latest",
             ]
@@ -514,13 +517,26 @@ with st.sidebar:
             "⚠️ API keys are not configured. Please add ANTHROPIC_API_KEY or OPENAI_API_KEY to your .env file."
         )
         # Add Claude model as default (to show UI even without keys)
-        available_models = ["claude-3-7-sonnet-latest"]
+        available_models = ["claude-opus-4-20250514"]
+
+    # Create user-friendly model display mapping
+    model_display_mapping = {
+        "claude-opus-4-20250514": "Claude Opus 4 (Most Capable)",
+        "claude-sonnet-4-20250514": "Claude Sonnet 4 (High Performance)",
+        "claude-3-5-sonnet-latest": "Claude 3.5 Sonnet (Latest)",
+        "claude-3-5-haiku-latest": "Claude 3.5 Haiku (Fastest)",
+        "gpt-4o": "GPT-4o",
+        "gpt-4o-mini": "GPT-4o Mini"
+    }
+
+    # Create display options for dropdown
+    model_display_options = [model_display_mapping.get(model, model) for model in available_models]
 
     # Model selection dropdown
     previous_model = st.session_state.selected_model
-    st.session_state.selected_model = st.selectbox(
+    selected_display_name = st.selectbox(
         "🤖 Select model to use",
-        options=available_models,
+        options=model_display_options,
         index=(
             available_models.index(st.session_state.selected_model)
             if st.session_state.selected_model in available_models
@@ -528,6 +544,9 @@ with st.sidebar:
         ),
         help="Anthropic models require ANTHROPIC_API_KEY and OpenAI models require OPENAI_API_KEY to be set as environment variables.",
     )
+    
+    # Convert back to technical model name
+    st.session_state.selected_model = available_models[model_display_options.index(selected_display_name)]
 
     # Notify when model is changed and session needs to be reinitialized
     if (
