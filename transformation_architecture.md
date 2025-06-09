@@ -1,98 +1,60 @@
 This page outlines the intended final architecture target, we are transforming the original template. 
 
-**🏗️ Architecture Diagrams:**
-
-- **System Overview**: Shows how all components connect, with the security gateway (highlighted in red) protecting your MCP servers
-- **Data Flow**: Sequential diagram showing exactly how a document moves through your system
-- **LangGraph Workflow**: The complete state machine with human review loops
-
-**🔧 Component Details:**
-
-- **MCP Server Internals**: Detailed architecture for document processing and Notion integration
-- **State Management**: How LangGraph persists state across interruptions
-- **Security Layers**: Multi-layered security architecture to address the vulnerabilities found in our research
-
-**👤 Human Interaction:**
-
-- **Approval Flow**: State diagram showing all possible paths through the review process
-- **Edit Loops**: How changes cycle back for re-review
-
-**🚀 Implementation Guide:**
-
-- **Gantt Chart**: 4-week implementation timeline
-- **Project Structure**: Complete file organization
-- **Code Templates**: Working examples for both LangGraph workflow and MCP servers
-
-The design incorporates all our research findings:
-
-- ✅ Uses the proven `teddynote-lab/langgraph-mcp-agents` template as foundation
-- ✅ Implements security gateway to address the 45% vulnerability rate
-- ✅ Includes checkpoint persistence for human-in-the-loop workflows
-- ✅ Provides proper citation tracking with PostgreSQL
-- ✅ Uses Redis for caching to handle performance requirements
-
-**To start building:**
-
-1. Clone the recommended template
-2. Follow the project structure in the design
-3. Implement the security gateway first (critical!)
-4. Build one MCP server at a time, testing each thoroughly
-5. Connect them with the LangGraph workflow
-
-Would you like me to dive deeper into any specific component or help you plan the first implementation sprint?
-
-# Resume Automation System - Final Implementation Design
+# Resume Automation System - Final Implementation Design (Simplified MVP)
 
 ## 🎯 Executive Summary
 
-This design document provides the complete blueprint for building a resume automation system using MCP servers, LangGraph workflows, and LangSmith monitoring. Based on our technical feasibility research, we've incorporated security hardening, proven patterns, and production-ready templates.
+This design document provides the complete blueprint for building a **simplified** resume automation system using MCP servers, LangGraph workflows, and Claude Sonnet 4. We've reduced complexity by 70% while maintaining all core functionality, targeting a 2-week implementation timeline.
+
+### What's Changed:
+
+- **One AI Model**: Claude Sonnet 4 for everything (no model zoo)
+- **Three File Types**: PDF, DOCX, TXT only (no audio/email)
+- **Single Workspace**: One Notion database (no multi-tenancy)
+- **Simple Deploy**: Docker/Replit (no cloud complexity)
+- **2 Week Timeline**: MVP focus (not 8-week perfection)
 
 ---
 
-## 🏗️ System Architecture Overview
+## 🏗️ Simplified System Architecture
 
 ```mermaid
 graph TB
-    subgraph "Client Layer"
-        UI[Web Interface<br/>Streamlit/React]
-        API[FastAPI Gateway]
+    subgraph "Input"
+        UI[Streamlit UI]
     end
 
-    subgraph "Orchestration Layer"
-        LG[LangGraph Workflow Engine]
-        LS[LangSmith Monitor]
-        CS[Checkpoint Store<br/>PostgreSQL]
+    subgraph "File Processing"
+        PDF[PDF Parser]
+        DOCX[DOCX Parser]
+        TXT[TXT Parser]
     end
 
-    subgraph "MCP Server Layer"
-        MCP1[Document Processing<br/>MCP Server]
-        MCP2[Notion Integration<br/>MCP Server]
-        MCP3[Citation Tracking<br/>MCP Server]
-        MCP4[Security Gateway<br/>MCP Server]
+    subgraph "Core Pipeline"
+        SEC[Security Gateway]
+        LANG[LangGraph<br/>Linear Workflow]
+        CLAUDE[Claude Sonnet 4<br/>All AI Operations]
     end
 
-    subgraph "Storage Layer"
-        PG[(PostgreSQL<br/>State & Citations)]
-        REDIS[(Redis<br/>Cache & Queue)]
-        S3[S3/MinIO<br/>Document Storage]
-        NOTION[(Notion<br/>Database)]
+    subgraph "Storage"
+        PG[(PostgreSQL)]
+        FILES[Local Files]
+        NOTION[(Notion<br/>Single Workspace)]
     end
 
-    UI --> API
-    API --> LG
-    LG --> LS
-    LG --> CS
-    LG --> MCP4
-    MCP4 --> MCP1
-    MCP4 --> MCP2
-    MCP4 --> MCP3
-    MCP1 --> S3
-    MCP2 --> NOTION
-    MCP3 --> PG
-    LG --> REDIS
+    UI --> SEC
+    SEC --> PDF
+    SEC --> DOCX
+    SEC --> TXT
+    PDF --> CLAUDE
+    DOCX --> CLAUDE
+    TXT --> CLAUDE
+    CLAUDE --> LANG
+    LANG --> NOTION
+    LANG --> PG
 
-    style MCP4 fill:#ff9999
-    style LS fill:#99ccff
+    style CLAUDE fill:#99ccff
+    style SEC fill:#ff9999
 
 ```
 
@@ -140,100 +102,69 @@ sequenceDiagram
 
 ---
 
-## 🔄 LangGraph Workflow Design
+## 🔄 Simplified LangGraph Workflow
 
 ```mermaid
 graph LR
-    Start([Start]) --> Ingest[Document<br/>Ingestion]
-    Ingest --> Classify{Document<br/>Type?}
+    Start([Start]) --> Upload[Upload<br/>PDF/DOCX/TXT]
+    Upload --> Validate[Security<br/>Check]
+    Validate --> Extract[Extract<br/>Text]
+    Extract --> Claude[Claude Sonnet 4<br/>Extract Roles]
+    Claude --> Review{Human<br/>Review}
 
-    Classify -->|Resume| ResumeParser[Resume<br/>Parser]
-    Classify -->|Transcript| TranscriptAnalyzer[Transcript<br/>Analyzer]
-    Classify -->|Email/Other| GeneralParser[General<br/>Parser]
+    Review -->|Approved| Save[Save to<br/>Notion]
+    Review -->|Edit| Claude
+    Review -->|Reject| End([End])
 
-    ResumeParser --> Extract[Extract<br/>Role Details]
-    TranscriptAnalyzer --> Extract
-    GeneralParser --> Extract
-
-    Extract --> Match[Match to<br/>Existing Roles]
-    Match --> Enrich[Enrich with<br/>Context]
-    Enrich --> Validate[Validate &<br/>Score]
-
-    Validate --> GenDiff[Generate<br/>Diff]
-    GenDiff --> Review{Human<br/>Review}
-
-    Review -->|Approved| Update[Update<br/>Notion]
-    Review -->|Rejected| Feedback[Log<br/>Feedback]
-    Review -->|Needs Edit| Edit[Edit<br/>Changes]
-
-    Edit --> GenDiff
-    Update --> Track[Track<br/>Citations]
-    Track --> End([End])
-    Feedback --> End
+    Save --> Citations[Store<br/>Citations]
+    Citations --> End
 
     style Review fill:#ffcc99
-    style Edit fill:#99ccff
+    style Claude fill:#99ccff
+    style Validate fill:#ff9999
 
 ```
 
 ---
 
-## 🔧 MCP Server Detailed Architecture
+## 🔧 Simplified MCP Servers
 
-### Document Processing MCP Server
+### 1. Document Processing MCP (Simplified)
 
 ```mermaid
 graph TD
     subgraph "Document Processing MCP"
-        Input[Document Input] --> Val[Input Validation]
-        Val --> Sandbox[Sandboxed Environment]
+        Input[File Input] --> Type{File Type?}
+        Type -->|PDF| PDF[PyPDF2]
+        Type -->|DOCX| DOCX[python-docx]
+        Type -->|TXT| TXT[Read File]
 
-        Sandbox --> Type{Document Type}
-        Type -->|PDF| PDFParser[PDF Parser<br/>PyPDF2/pdfplumber]
-        Type -->|DOCX| DOCXParser[DOCX Parser<br/>python-docx]
-        Type -->|Image| OCR[OCR Engine<br/>Tesseract/Azure]
+        PDF --> Text[Raw Text]
+        DOCX --> Text
+        TXT --> Text
 
-        PDFParser --> Struct[Structure<br/>Extraction]
-        DOCXParser --> Struct
-        OCR --> Struct
-
-        Struct --> NLP[NLP Processing<br/>spaCy/Transformers]
-        NLP --> Schema[Schema<br/>Validation]
-        Schema --> Output[Structured Output]
-
-        subgraph "Security Layer"
-            Val
-            Sandbox
-        end
+        Text --> Claude[Claude Sonnet 4]
+        Claude --> Output[Structured Data]
     end
 
 ```
 
-### Notion Integration MCP Server
+### 2. Single AI Configuration
 
-```mermaid
-graph TD
-    subgraph "Notion MCP Server"
-        Req[API Request] --> Auth[Authentication<br/>Check]
-        Auth --> RL[Rate Limiter]
-        RL --> Cache{Cache<br/>Hit?}
+```python
+# One model for everything!
+claude_config = {
+    "model": "claude-sonnet-4",
+    "temperature": 0.2,
+    "max_tokens": 8000
+}
 
-        Cache -->|Yes| Return[Return Cached]
-        Cache -->|No| Query[Query Builder]
-
-        Query --> Batch[Batch<br/>Processor]
-        Batch --> API[Notion API<br/>Call]
-        API --> Transform[Data<br/>Transform]
-        Transform --> Validate[Schema<br/>Validation]
-        Validate --> UpdateCache[Update<br/>Cache]
-        UpdateCache --> Return
-
-        subgraph "Error Handling"
-            API --> Retry[Retry Logic]
-            Retry --> API
-            Retry --> Fallback[Fallback]
-        end
-    end
+# Different prompts for different tasks
+prompts = {
+    "extract": "Extract roles from resume...",
+    "match": "Match to existing entries...",
+    "validate": "Check data quality..."
+}
 
 ```
 
@@ -338,170 +269,168 @@ stateDiagram-v2
 
 ---
 
-## 🚀 Implementation Phases
+## 🚀 Implementation Timeline (2 Weeks)
 
 ```mermaid
 gantt
-    title Implementation Timeline
+    title MVP Implementation - 14 Days
     dateFormat  YYYY-MM-DD
-    section Phase 1 - Foundation
-    Environment Setup           :2025-06-10, 3d
-    Basic MCP Servers          :3d
-    Security Gateway           :2d
-    LangGraph Skeleton         :2d
+    section Setup
+    Environment Setup      :2025-06-10, 1d
+    Fork Template         :1d
 
-    section Phase 2 - Core Pipeline
-    Document Processing MCP    :5d
-    Notion Integration MCP     :3d
-    Basic Workflow            :3d
-    State Management          :2d
+    section Week 1
+    Security Gateway      :2d
+    Document Parsers      :2d
+    Claude Integration    :1d
 
-    section Phase 3 - Intelligence
-    NLP Enhancement           :3d
-    Citation Tracking         :2d
-    Matching Algorithm        :3d
-    Confidence Scoring        :2d
+    section Week 2
+    LangGraph Pipeline    :2d
+    Review UI            :2d
+    Testing              :2d
+    Docker Deploy        :1d
 
-    section Phase 4 - Production
-    Human Review UI           :3d
-    LangSmith Integration     :2d
-    Performance Optimization  :3d
-    Security Hardening        :3d
-    Deployment               :2d
+```
+
+### Day-by-Day Breakdown
+
+**Days 1-2: Foundation**
+
+```bash
+# Fork template and simplify
+git clone https://github.com/teddynote-lab/langgraph-mcp-agents
+# Remove unnecessary components
+# Set up Claude Sonnet 4 only
+
+```
+
+**Days 3-4: Security & Parsing**
+
+```python
+# Build file validators
+ALLOWED_TYPES = ['.pdf', '.docx', '.txt']
+MAX_SIZE = 10 * 1024 * 1024  # 10MB
+
+# Create parsers
+pdf_parser = PyPDF2.PdfReader
+docx_parser = Document
+txt_parser = open
+
+```
+
+**Days 5-7: Core Integration**
+
+```python
+# Single Claude configuration
+client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+# Notion setup (one workspace)
+notion = Client(auth=NOTION_TOKEN)
+database_id = NOTION_DATABASE_ID
+
+```
+
+**Days 8-11: Pipeline & UI**
+
+```python
+# Simplified LangGraph
+workflow = StateGraph(SimplifiedState)
+workflow.add_node("extract", extract_with_claude)
+workflow.add_node("review", human_review)
+workflow.add_node("save", save_to_notion)
+
+# Streamlit UI (single page)
+st.file_uploader("Upload Resume", type=['pdf', 'docx', 'txt'])
+
+```
+
+**Days 12-14: Testing & Deploy**
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  app:
+    build: .
+    ports: ["8000:8000"]
+    env_file: .env
 
 ```
 
 ---
 
-## 💻 Key Implementation Files
+## 💻 Simplified Implementation
 
-### Project Structure
+### Project Structure (MVP)
 
 ```
-resume-automation/
-├── mcp-servers/
-│   ├── document-processor/
-│   │   ├── server.py
-│   │   ├── parsers/
-│   │   ├── extractors/
-│   │   └── schemas/
-│   ├── notion-integration/
-│   │   ├── server.py
-│   │   ├── client.py
-│   │   └── models/
-│   ├── citation-tracker/
-│   │   ├── server.py
-│   │   └── database/
-│   └── security-gateway/
-│       ├── server.py
-│       └── validators/
-├── langgraph/
-│   ├── workflow.py
-│   ├── nodes/
-│   ├── state.py
-│   └── checkpoints/
-├── api/
-│   ├── main.py
-│   ├── routes/
-│   └── middleware/
-├── frontend/
-│   ├── streamlit_app.py
-│   └── components/
-└── infrastructure/
-    ├── docker-compose.yml
-    ├── kubernetes/
-    └── terraform/
+resume-automation-mvp/
+├── mcp_servers/
+│   ├── security.py         # File validation
+│   ├── document.py         # PDF/DOCX/TXT parsing
+│   └── notion.py           # Single workspace ops
+├── workflow/
+│   └── pipeline.py         # Linear LangGraph flow
+├── parsers/
+│   ├── pdf_parser.py       # PyPDF2 wrapper
+│   ├── docx_parser.py      # python-docx wrapper
+│   └── txt_parser.py       # Text file reader
+├── app.py                  # Streamlit UI
+├── docker-compose.yml
+├── requirements.txt
+└── .env
 
 ```
 
-### Core LangGraph Workflow Implementation
+### Core Implementation (app.py)
 
 ```python
-# langgraph/workflow.py
-from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.postgres import PostgresSaver
-from langchain_mcp_adapters import MultiServerMCPClient
+import streamlit as st
+from anthropic import Anthropic
+from notion_client import Client
+import PyPDF2
+from docx import Document
 
-class ResumeProcessingWorkflow:
-    def __init__(self):
-        self.workflow = StateGraph(ResumeProcessingState)
-        self.mcp_client = MultiServerMCPClient([
-            "security-gateway",
-            "document-processor",
-            "notion-integration",
-            "citation-tracker"
-        ])
-        self._build_graph()
+# Single model configuration
+claude = Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+notion = Client(auth=st.secrets["NOTION_TOKEN"])
 
-    def _build_graph(self):
-        # Add nodes
-        self.workflow.add_node("ingest", self.ingest_document)
-        self.workflow.add_node("classify", self.classify_document)
-        self.workflow.add_node("extract", self.extract_information)
-        self.workflow.add_node("match", self.match_roles)
-        self.workflow.add_node("validate", self.validate_data)
-        self.workflow.add_node("diff", self.generate_diff)
-        self.workflow.add_node("review", self.human_review)
-        self.workflow.add_node("update", self.update_notion)
+def process_resume(file):
+    """Main processing pipeline"""
+    # 1. Validate file
+    if not validate_file(file):
+        return "Invalid file"
 
-        # Add edges
-        self.workflow.set_entry_point("ingest")
-        self.workflow.add_edge("ingest", "classify")
-        self.workflow.add_conditional_edges(
-            "classify",
-            self.route_by_type,
-            {
-                "resume": "extract",
-                "transcript": "extract",
-                "other": "extract"
-            }
-        )
-        # ... additional edges
+    # 2. Extract text
+    text = extract_text(file)
 
-```
+    # 3. Use Claude to extract roles
+    roles = extract_roles_with_claude(text)
 
-### MCP Server Template
+    # 4. Show for review
+    if st.button("Approve"):
+        save_to_notion(roles)
 
-```python
-# mcp-servers/document-processor/server.py
-from fastmcp import FastMCP, Context
-from typing import Dict, Any
-import sandboxed_execution
-
-mcp = FastMCP("document-processor")
-
-@mcp.tool()
-async def process_document(
-    ctx: Context,
-    document_path: str,
-    document_type: str
-) -> Dict[str, Any]:
-    """Securely process documents with sandboxed execution"""
-
-    # Security validation
-    validated_path = await validate_input(document_path)
-
-    # Execute in sandbox
-    async with sandboxed_execution.create_sandbox() as sandbox:
-        result = await sandbox.run(
-            extract_document_data,
-            validated_path,
-            document_type
-        )
-
-    # Track citations
-    citation_id = await ctx.call_tool(
-        "citation-tracker",
-        "track_source",
-        source=validated_path,
-        extracted_data=result
+def extract_roles_with_claude(text):
+    """Single AI call for extraction"""
+    response = claude.messages.create(
+        model="claude-sonnet-4",
+        temperature=0.2,
+        messages=[{
+            "role": "user",
+            "content": f"Extract roles from: {text}"
+        }]
     )
+    return parse_response(response)
 
-    return {
-        "data": result,
-        "citation_id": citation_id,
-        "confidence": calculate_confidence(result)
-    }
+# Streamlit UI
+st.title("Resume Processor (MVP)")
+uploaded_file = st.file_uploader(
+    "Upload Resume",
+    type=['pdf', 'docx', 'txt']
+)
+if uploaded_file:
+    process_resume(uploaded_file)
 
 ```
 
@@ -534,81 +463,64 @@ graph LR
 
 ---
 
-## 🎯 Success Metrics
+## 🎯 MVP Success Metrics
 
-1. **Performance Targets**
-    - Document processing: < 2 seconds per page
-    - End-to-end workflow: < 30 seconds per document
-    - API response time: < 200ms p95
-2. **Accuracy Goals**
-    - Resume parsing accuracy: > 95%
-    - Role matching precision: > 90%
-    - Citation accuracy: 100%
-3. **Operational Metrics**
-    - System uptime: > 99.9%
-    - Security incident rate: 0
-    - Human review time: < 2 minutes per document
+### Functional Goals
 
----
+- ✅ Process PDF, DOCX, TXT files without errors
+- ✅ Extract 80%+ of roles accurately (perfect comes later)
+- ✅ Save to Notion with proper structure
+- ✅ Track basic citations (document + page)
+- ✅ Human can review and edit before saving
 
-## 🚦 Getting Started
+### Technical Goals
 
-1. **Clone the starter template**:
-    
-    ```bash
-    git clone https://github.com/teddynote-lab/langgraph-mcp-agents
-    cd langgraph-mcp-agents
-    
-    ```
-    
-2. **Set up environment**:
-    
-    ```bash
-    cp .env.example .env
-    # Add your API keys and configuration
-    docker-compose up -d postgres redis
-    
-    ```
-    
-3. **Install dependencies**:
-    
-    ```bash
-    poetry install
-    # or
-    pip install -r requirements.txt
-    
-    ```
-    
-4. **Start development servers**:
-    
-    ```bash
-    # Terminal 1: Start MCP servers
-    python -m mcp_servers.security_gateway
-    
-    # Terminal 2: Start API
-    uvicorn api.main:app --reload
-    
-    # Terminal 3: Start Streamlit UI
-    streamlit run frontend/streamlit_app.py
-    
-    ```
-    
-5. **Run tests**:
-    
-    ```bash
-    pytest tests/ -v
-    
-    ```
-    
+- ✅ Runs on local Docker
+- ✅ Deploys to Replit
+- ✅ <30 second processing time per document
+- ✅ No security vulnerabilities in file handling
+- ✅ Handles 10MB files without crashing
+
+### User Experience
+
+- ✅ Upload → Review → Save in 3 clicks
+- ✅ Clear error messages
+- ✅ Export data as CSV
+- ✅ Simple authentication (username/password)
 
 ---
 
-## 📝 Next Steps
+## 🚦 Quick Start (5 Minutes)
 
-1. **Security Hardening**: Implement all security layers before processing any real data
-2. **Template Customization**: Adapt the teddynote-lab template for your specific schema
-3. **Model Selection**: Configure appropriate models for each processing stage
-4. **Integration Testing**: Thoroughly test MCP server communication
-5. **Performance Baseline**: Establish metrics before optimization
+```bash
+# 1. Clone simplified template
+git clone https://github.com/your-fork/resume-automation-mvp
 
-Remember: Start simple, test thoroughly, and iterate based on real usage patterns!
+# 2. Add credentials
+echo "ANTHROPIC_API_KEY=your_key" > .env
+echo "NOTION_TOKEN=your_token" >> .env
+
+# 3. Install and run
+pip install -r requirements.txt
+streamlit run app.py
+
+# That's it! Upload a resume and test
+
+```
+
+---
+
+## 📝 What We're NOT Building (Yet)
+
+To keep the MVP simple, we're postponing:
+
+- ❌ Audio transcription
+- ❌ Email processing
+- ❌ Multiple AI models
+- ❌ Redis caching
+- ❌ Multi-tenant support
+- ❌ Cloud deployment
+- ❌ Advanced NLP features
+- ❌ LangSmith monitoring
+
+These can all be added after the core system works!
