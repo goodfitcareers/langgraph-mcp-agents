@@ -1,0 +1,26 @@
+{
+  "security_gateway": {
+    "command": "python",
+    "args": ["./mcp_servers/security_gateway.py"],
+    "transport": "stdio",
+    "working_dir": "."
+  },
+  "document_processor": {
+    "command": "python",
+    "args": ["./mcp_servers/document_processor.py"],
+    "transport": "stdio",
+    "working_dir": "."
+  },
+  "notion_integration": {
+    "command": "python",
+    "args": ["./mcp_servers/notion_integration.py"],
+    "transport": "stdio",
+    "working_dir": "."
+  },
+  "citation_tracker": {
+    "command": "python",
+    "args": ["./mcp_servers/citation_tracker.py"],
+    "transport": "stdio",
+    "working_dir": "."
+  }
+}
