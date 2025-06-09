@@ -1,0 +1,13 @@
+servers:
+  security-gateway:
+    transport: stdio
+    command: python -m mcp_servers.security_gateway.server
+  document-processor:
+    transport: stdio
+    command: python -m mcp_servers.document_processor.server
+  notion-integration:
+    transport: stdio
+    command: python -m mcp_servers.notion_integration.server
+  citation-tracker:
+    transport: stdio
+    command: python -m mcp_servers.citation_tracker.server
