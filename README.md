@@ -1,3 +1,5 @@
+THIS README IS FOR THE ORIGINAL TEMPLATE, not the final desired system.
+
 # LangGraph Agents + MCP
 
 [![English](https://img.shields.io/badge/Language-English-blue)](README.md) [![Korean](https://img.shields.io/badge/Language-한국어-red)](README_KOR.md)
