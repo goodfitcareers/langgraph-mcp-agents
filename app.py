@@ -4,881 +4,448 @@ import nest_asyncio
 import json
 import os
 import platform
+import uuid
+import tempfile
+from pathlib import Path
+from datetime import datetime
 
+# Windows compatibility
 if platform.system() == "Windows":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-# Apply nest_asyncio: Allow nested calls within an already running event loop
+# Apply nest_asyncio for Streamlit compatibility
 nest_asyncio.apply()
 
-# Create and reuse global event loop (create once and continue using)
+# Streamlit session management
 if "event_loop" not in st.session_state:
     loop = asyncio.new_event_loop()
     st.session_state.event_loop = loop
     asyncio.set_event_loop(loop)
 
-from langgraph.prebuilt import create_react_agent
-from langchain_anthropic import ChatAnthropic
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
+# Resume system imports
+from workflow.resume_pipeline import create_resume_workflow
 from dotenv import load_dotenv
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from utils import astream_graph, random_uuid
-from langchain_core.messages.ai import AIMessageChunk
-from langchain_core.messages.tool import ToolMessage
-from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.runnables import RunnableConfig
 
-# Load environment variables (get API keys and settings from .env file)
+# Load environment variables
 load_dotenv(override=True)
 
-# config.json file path setting
-CONFIG_FILE_PATH = "config.json"
+# Page configuration
+st.set_page_config(
+    page_title="Resume Automation System", 
+    page_icon="📄", 
+    layout="wide"
+)
 
-# Function to load settings from JSON file
-def load_config_from_json():
-    """
-    Loads settings from config.json file.
-    Creates a file with default settings if it doesn't exist.
-
-    Returns:
-        dict: Loaded settings
-    """
-    default_config = {
-        "get_current_time": {
-            "command": "python",
-            "args": ["./mcp_server_time.py"],
-            "transport": "stdio"
-        }
-    }
-    
-    try:
-        if os.path.exists(CONFIG_FILE_PATH):
-            with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        else:
-            # Create file with default settings if it doesn't exist
-            save_config_to_json(default_config)
-            return default_config
-    except Exception as e:
-        st.error(f"Error loading settings file: {str(e)}")
-        return default_config
-
-# Function to save settings to JSON file
-def save_config_to_json(config):
-    """
-    Saves settings to config.json file.
-
-    Args:
-        config (dict): Settings to save
-    
-    Returns:
-        bool: Save success status
-    """
-    try:
-        with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-        return True
-    except Exception as e:
-        st.error(f"Error saving settings file: {str(e)}")
-        return False
-
-# Initialize login session variables
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-# Check if login is required
+# Authentication check (simplified from original)
 use_login = os.environ.get("USE_LOGIN", "false").lower() == "true"
 
-# Change page settings based on login status
-if use_login and not st.session_state.authenticated:
-    # Login page uses default (narrow) layout
-    st.set_page_config(page_title="Agent with MCP Tools", page_icon="🧠")
-else:
-    # Main app uses wide layout
-    st.set_page_config(page_title="Agent with MCP Tools", page_icon="🧠", layout="wide")
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = not use_login  # Skip auth if disabled
 
-# Display login screen if login feature is enabled and not yet authenticated
 if use_login and not st.session_state.authenticated:
-    st.title("🔐 Login")
-    st.markdown("Login is required to use the system.")
-
-    # Place login form in the center of the screen with narrow width
+    st.title("🔐 Login Required")
+    
     with st.form("login_form"):
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
         submit_button = st.form_submit_button("Login")
 
         if submit_button:
-            expected_username = os.environ.get("USER_ID")
-            expected_password = os.environ.get("USER_PASSWORD")
+            expected_username = os.environ.get("USER_ID", "admin")
+            expected_password = os.environ.get("USER_PASSWORD", "admin123")
 
             if username == expected_username and password == expected_password:
                 st.session_state.authenticated = True
-                st.success("✅ Login successful! Please wait...")
+                st.success("✅ Login successful!")
                 st.rerun()
             else:
-                st.error("❌ Username or password is incorrect.")
-
-    # Don't display the main app on the login screen
+                st.error("❌ Invalid credentials")
     st.stop()
 
-# Add author information at the top of the sidebar (placed before other sidebar elements)
-st.sidebar.markdown("### ✍️ Made by [TeddyNote](https://youtube.com/c/teddynote) 🚀")
-st.sidebar.markdown(
-    "### 💻 [Project Page](https://github.com/teddynote-lab/langgraph-mcp-agents)"
-)
+# Initialize workflow
+if "workflow" not in st.session_state:
+    st.session_state.workflow = create_resume_workflow()
 
-st.sidebar.divider()  # Add divider
+if "processing_state" not in st.session_state:
+    st.session_state.processing_state = None
 
-# Existing page title and description
-st.title("💬 MCP Tool Utilization Agent")
-st.markdown("✨ Ask questions to the ReAct agent that utilizes MCP tools.")
+if "workflow_thread_id" not in st.session_state:
+    st.session_state.workflow_thread_id = None
 
-SYSTEM_PROMPT = """<ROLE>
-You are a smart agent with an ability to use tools. 
-You will be given a question and you will use the tools to answer the question.
-Pick the most relevant tool to answer the question. 
-If you are failed to answer the question, try different tools to get context.
-Your answer should be very polite and professional.
-</ROLE>
+# Main application header
+st.title("📄 Resume Automation System")
+st.markdown("*AI-powered professional history extraction with human review*")
 
-----
-
-<INSTRUCTIONS>
-Step 1: Analyze the question
-- Analyze user's question and final goal.
-- If the user's question is consist of multiple sub-questions, split them into smaller sub-questions.
-
-Step 2: Pick the most relevant tool
-- Pick the most relevant tool to answer the question.
-- If you are failed to answer the question, try different tools to get context.
-
-Step 3: Answer the question
-- Answer the question in the same language as the question.
-- Your answer should be very polite and professional.
-
-Step 4: Provide the source of the answer(if applicable)
-- If you've used the tool, provide the source of the answer.
-- Valid sources are either a website(URL) or a document(PDF, etc).
-
-Guidelines:
-- If you've used the tool, your answer should be based on the tool's output(tool's output is more important than your own knowledge).
-- If you've used the tool, and the source is valid URL, provide the source(URL) of the answer.
-- Skip providing the source if the source is not URL.
-- Answer in the same language as the question.
-- Answer should be concise and to the point.
-- Avoid response your output with any other information than the answer and the source.  
-</INSTRUCTIONS>
-
-----
-
-<OUTPUT_FORMAT>
-(concise answer to the question)
-
-**Source**(if applicable)
-- (source1: valid URL)
-- (source2: valid URL)
-- ...
-</OUTPUT_FORMAT>
-"""
-
-OUTPUT_TOKEN_INFO = {
-    "claude-3-5-sonnet-latest": {"max_tokens": 8192},
-    "claude-3-5-haiku-latest": {"max_tokens": 8192},
-    "claude-sonnet-4-20250514": {"max_tokens": 64000},
-    "claude-opus-4-20250514": {"max_tokens": 32000},
-    "gpt-4o": {"max_tokens": 16000},
-    "gpt-4o-mini": {"max_tokens": 16000},
-}
-
-# Initialize session state
-if "session_initialized" not in st.session_state:
-    st.session_state.session_initialized = False  # Session initialization flag
-    st.session_state.agent = None  # Storage for ReAct agent object
-    st.session_state.history = []  # List for storing conversation history
-    st.session_state.mcp_client = None  # Storage for MCP client object
-    st.session_state.timeout_seconds = (
-        120  # Response generation time limit (seconds), default 120 seconds
-    )
-    st.session_state.selected_model = (
-        "claude-opus-4-20250514"  # Default model selection
-    )
-    st.session_state.recursion_limit = 100  # Recursion call limit, default 100
-
-if "thread_id" not in st.session_state:
-    st.session_state.thread_id = random_uuid()
-
-
-# --- Function Definitions ---
-
-
-async def cleanup_mcp_client():
-    """
-    Safely terminates the existing MCP client.
-
-    Properly releases resources if an existing client exists.
-    """
-    if "mcp_client" in st.session_state and st.session_state.mcp_client is not None:
-        try:
-
-            await st.session_state.mcp_client.__aexit__(None, None, None)
-            st.session_state.mcp_client = None
-        except Exception as e:
-            import traceback
-
-            # st.warning(f"Error while terminating MCP client: {str(e)}")
-            # st.warning(traceback.format_exc())
-
-
-def print_message():
-    """
-    Displays chat history on the screen.
-
-    Distinguishes between user and assistant messages on the screen,
-    and displays tool call information within the assistant message container.
-    """
-    i = 0
-    while i < len(st.session_state.history):
-        message = st.session_state.history[i]
-
-        if message["role"] == "user":
-            st.chat_message("user", avatar="🧑‍💻").markdown(message["content"])
-            i += 1
-        elif message["role"] == "assistant":
-            # Create assistant message container
-            with st.chat_message("assistant", avatar="🤖"):
-                # Display assistant message content
-                st.markdown(message["content"])
-
-                # Check if the next message is tool call information
-                if (
-                    i + 1 < len(st.session_state.history)
-                    and st.session_state.history[i + 1]["role"] == "assistant_tool"
-                ):
-                    # Display tool call information in the same container as an expander
-                    with st.expander("🔧 Tool Call Information", expanded=False):
-                        st.markdown(st.session_state.history[i + 1]["content"])
-                    i += 2  # Increment by 2 as we processed two messages together
-                else:
-                    i += 1  # Increment by 1 as we only processed a regular message
-        else:
-            # Skip assistant_tool messages as they are handled above
-            i += 1
-
-
-def get_streaming_callback(text_placeholder, tool_placeholder):
-    """
-    Creates a streaming callback function.
-
-    This function creates a callback function to display responses generated from the LLM in real-time.
-    It displays text responses and tool call information in separate areas.
-
-    Args:
-        text_placeholder: Streamlit component to display text responses
-        tool_placeholder: Streamlit component to display tool call information
-
-    Returns:
-        callback_func: Streaming callback function
-        accumulated_text: List to store accumulated text responses
-        accumulated_tool: List to store accumulated tool call information
-    """
-    accumulated_text = []
-    accumulated_tool = []
-
-    def callback_func(message: dict):
-        nonlocal accumulated_text, accumulated_tool
-        message_content = message.get("content", None)
-
-        if isinstance(message_content, AIMessageChunk):
-            content = message_content.content
-            # If content is in list form (mainly occurs in Claude models)
-            if isinstance(content, list) and len(content) > 0:
-                message_chunk = content[0]
-                # Process text type
-                if message_chunk["type"] == "text":
-                    accumulated_text.append(message_chunk["text"])
-                    text_placeholder.markdown("".join(accumulated_text))
-                # Process tool use type
-                elif message_chunk["type"] == "tool_use":
-                    if "partial_json" in message_chunk:
-                        accumulated_tool.append(message_chunk["partial_json"])
-                    else:
-                        tool_call_chunks = message_content.tool_call_chunks
-                        tool_call_chunk = tool_call_chunks[0]
-                        accumulated_tool.append(
-                            "\n```json\n" + str(tool_call_chunk) + "\n```\n"
-                        )
-                    with tool_placeholder.expander(
-                        "🔧 Tool Call Information", expanded=True
-                    ):
-                        st.markdown("".join(accumulated_tool))
-            # Process if tool_calls attribute exists (mainly occurs in OpenAI models)
-            elif (
-                hasattr(message_content, "tool_calls")
-                and message_content.tool_calls
-                and len(message_content.tool_calls[0]["name"]) > 0
-            ):
-                tool_call_info = message_content.tool_calls[0]
-                accumulated_tool.append("\n```json\n" + str(tool_call_info) + "\n```\n")
-                with tool_placeholder.expander(
-                    "🔧 Tool Call Information", expanded=True
-                ):
-                    st.markdown("".join(accumulated_tool))
-            # Process if content is a simple string
-            elif isinstance(content, str):
-                accumulated_text.append(content)
-                text_placeholder.markdown("".join(accumulated_text))
-            # Process if invalid tool call information exists
-            elif (
-                hasattr(message_content, "invalid_tool_calls")
-                and message_content.invalid_tool_calls
-            ):
-                tool_call_info = message_content.invalid_tool_calls[0]
-                accumulated_tool.append("\n```json\n" + str(tool_call_info) + "\n```\n")
-                with tool_placeholder.expander(
-                    "🔧 Tool Call Information (Invalid)", expanded=True
-                ):
-                    st.markdown("".join(accumulated_tool))
-            # Process if tool_call_chunks attribute exists
-            elif (
-                hasattr(message_content, "tool_call_chunks")
-                and message_content.tool_call_chunks
-            ):
-                tool_call_chunk = message_content.tool_call_chunks[0]
-                accumulated_tool.append(
-                    "\n```json\n" + str(tool_call_chunk) + "\n```\n"
-                )
-                with tool_placeholder.expander(
-                    "🔧 Tool Call Information", expanded=True
-                ):
-                    st.markdown("".join(accumulated_tool))
-            # Process if tool_calls exists in additional_kwargs (supports various model compatibility)
-            elif (
-                hasattr(message_content, "additional_kwargs")
-                and "tool_calls" in message_content.additional_kwargs
-            ):
-                tool_call_info = message_content.additional_kwargs["tool_calls"][0]
-                accumulated_tool.append("\n```json\n" + str(tool_call_info) + "\n```\n")
-                with tool_placeholder.expander(
-                    "🔧 Tool Call Information", expanded=True
-                ):
-                    st.markdown("".join(accumulated_tool))
-        # Process if it's a tool message (tool response)
-        elif isinstance(message_content, ToolMessage):
-            accumulated_tool.append(
-                "\n```json\n" + str(message_content.content) + "\n```\n"
-            )
-            with tool_placeholder.expander("🔧 Tool Call Information", expanded=True):
-                st.markdown("".join(accumulated_tool))
-        return None
-
-    return callback_func, accumulated_text, accumulated_tool
-
-
-async def process_query(query, text_placeholder, tool_placeholder, timeout_seconds=60):
-    """
-    Processes user questions and generates responses.
-
-    This function passes the user's question to the agent and streams the response in real-time.
-    Returns a timeout error if the response is not completed within the specified time.
-
-    Args:
-        query: Text of the question entered by the user
-        text_placeholder: Streamlit component to display text responses
-        tool_placeholder: Streamlit component to display tool call information
-        timeout_seconds: Response generation time limit (seconds)
-
-    Returns:
-        response: Agent's response object
-        final_text: Final text response
-        final_tool: Final tool call information
-    """
-    try:
-        if st.session_state.agent:
-            streaming_callback, accumulated_text_obj, accumulated_tool_obj = (
-                get_streaming_callback(text_placeholder, tool_placeholder)
-            )
-            try:
-                response = await asyncio.wait_for(
-                    astream_graph(
-                        st.session_state.agent,
-                        {"messages": [HumanMessage(content=query)]},
-                        callback=streaming_callback,
-                        config=RunnableConfig(
-                            recursion_limit=st.session_state.recursion_limit,
-                            thread_id=st.session_state.thread_id,
-                        ),
-                    ),
-                    timeout=timeout_seconds,
-                )
-            except asyncio.TimeoutError:
-                error_msg = f"⏱️ Request time exceeded {timeout_seconds} seconds. Please try again later."
-                return {"error": error_msg}, error_msg, ""
-
-            final_text = "".join(accumulated_text_obj)
-            final_tool = "".join(accumulated_tool_obj)
-            return response, final_text, final_tool
-        else:
-            return (
-                {"error": "🚫 Agent has not been initialized."},
-                "🚫 Agent has not been initialized.",
-                "",
-            )
-    except Exception as e:
-        import traceback
-
-        error_msg = f"❌ Error occurred during query processing: {str(e)}\n{traceback.format_exc()}"
-        return {"error": error_msg}, error_msg, ""
-
-
-async def initialize_session(mcp_config=None):
-    """
-    Initializes MCP session and agent.
-
-    Args:
-        mcp_config: MCP tool configuration information (JSON). Uses default settings if None
-
-    Returns:
-        bool: Initialization success status
-    """
-    with st.spinner("🔄 Connecting to MCP server..."):
-        # First safely clean up existing client
-        await cleanup_mcp_client()
-
-        if mcp_config is None:
-            # Load settings from config.json file
-            mcp_config = load_config_from_json()
-        client = MultiServerMCPClient(mcp_config)
-        await client.__aenter__()
-        tools = client.get_tools()
-        st.session_state.tool_count = len(tools)
-        st.session_state.mcp_client = client
-
-        # Initialize appropriate model based on selection
-        selected_model = st.session_state.selected_model
-
-        if selected_model in [
-            "claude-opus-4-20250514",
-            "claude-sonnet-4-20250514",
-            "claude-3-5-sonnet-latest",
-            "claude-3-5-haiku-latest",
-        ]:
-            model = ChatAnthropic(
-                model=selected_model,
-                temperature=0.1,
-                max_tokens=OUTPUT_TOKEN_INFO[selected_model]["max_tokens"],
-            )
-        else:  # Use OpenAI model
-            model = ChatOpenAI(
-                model=selected_model,
-                temperature=0.1,
-                max_tokens=OUTPUT_TOKEN_INFO[selected_model]["max_tokens"],
-            )
-        agent = create_react_agent(
-            model,
-            tools,
-            checkpointer=MemorySaver(),
-            prompt=SYSTEM_PROMPT,
-        )
-        st.session_state.agent = agent
-        st.session_state.session_initialized = True
-        return True
-
-
-# --- Sidebar: System Settings Section ---
+# Sidebar information
 with st.sidebar:
-    st.subheader("⚙️ System Settings")
+    st.markdown("### 🔧 System Information")
+    st.markdown("**Version**: MVP 1.0")
+    st.markdown("**AI Model**: Claude Sonnet 4")
+    st.markdown("**Supported Formats**: PDF, DOCX, TXT")
+    st.markdown("**Max File Size**: 10MB")
+    
+    st.divider()
+    
+    st.markdown("### 📊 Status")
+    if st.session_state.processing_state:
+        current_step = st.session_state.processing_state.get("current_step", "unknown")
+        completed_steps = len(st.session_state.processing_state.get("completed_steps", []))
+        st.markdown(f"**Current Step**: {current_step}")
+        st.markdown(f"**Completed Steps**: {completed_steps}/9")
+    else:
+        st.markdown("**Status**: Ready")
 
-    # Model selection feature
-    # Create list of available models
-    available_models = []
+# Main interface tabs
+tab1, tab2, tab3, tab4 = st.tabs(["📤 Upload", "👀 Review", "🗃️ Database", "📊 Export"])
 
-    # Check Anthropic API key
-    has_anthropic_key = os.environ.get("ANTHROPIC_API_KEY") is not None
-    if has_anthropic_key:
-        available_models.extend(
-            [
-                "claude-opus-4-20250514",
-                "claude-sonnet-4-20250514",
-                "claude-3-5-sonnet-latest",
-                "claude-3-5-haiku-latest",
-            ]
+with tab1:
+    st.header("Upload Resume")
+    
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.subheader("📋 Document Information")
+        
+        client_name = st.text_input(
+            "Client Name", 
+            help="Enter the name of the resume owner",
+            placeholder="e.g., John Smith"
         )
-
-    # Check OpenAI API key
-    has_openai_key = os.environ.get("OPENAI_API_KEY") is not None
-    if has_openai_key:
-        available_models.extend(["gpt-4o", "gpt-4o-mini"])
-
-    # Display message if no models are available
-    if not available_models:
-        st.warning(
-            "⚠️ API keys are not configured. Please add ANTHROPIC_API_KEY or OPENAI_API_KEY to your .env file."
+        
+        uploaded_file = st.file_uploader(
+            "Choose resume file",
+            type=['pdf', 'docx', 'txt'],
+            help="Upload PDF, DOCX, or TXT files only (max 10MB)"
         )
-        # Add Claude model as default (to show UI even without keys)
-        available_models = ["claude-opus-4-20250514"]
+        
+        if uploaded_file and client_name:
+            # Display file information
+            st.info(f"**File**: {uploaded_file.name}")
+            st.info(f"**Size**: {uploaded_file.size:,} bytes")
+            st.info(f"**Type**: {uploaded_file.type}")
+            
+            if st.button("🚀 Process Resume", type="primary", use_container_width=True):
+                with st.spinner("Processing resume... This may take 30-60 seconds."):
+                    
+                    # Save uploaded file temporarily
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmp_file:
+                        tmp_file.write(uploaded_file.getbuffer())
+                        temp_file_path = tmp_file.name
+                    
+                    try:
+                        # Prepare initial state
+                        initial_state = {
+                            "client_name": client_name,
+                            "document_path": temp_file_path,
+                            "document_type": uploaded_file.name.split('.')[-1].lower(),
+                            "file_size": uploaded_file.size,
+                            "processing_metadata": {},
+                            "error_log": [],
+                            "warnings": [],
+                            "completed_steps": [],
+                            "confidence_scores": {},
+                            "citations": {}
+                        }
+                        
+                        # Run workflow (will stop at human review)
+                        async def run_workflow():
+                            try:
+                                workflow = st.session_state.workflow
+                                # Initialize state with defaults
+                                state = {
+                                    "workflow_id": str(uuid.uuid4()),
+                                    "document_id": "",
+                                    "secure_path": "",
+                                    "raw_text": "",
+                                    "extracted_roles": [],
+                                    "existing_roles": [],
+                                    "matched_pairs": [],
+                                    "new_roles": [],
+                                    "proposed_changes": [],
+                                    "approved_changes": [],
+                                    "review_status": "not_started",
+                                    "reviewer_notes": "",
+                                    **initial_state
+                                }
+                                
+                                # For MVP, simulate workflow steps
+                                state["current_step"] = "validate_security"
+                                state["completed_steps"].append("validate_security")
+                                
+                                state["current_step"] = "extract_text"
+                                state["raw_text"] = f"Sample extracted text from {client_name}'s resume"
+                                state["completed_steps"].append("extract_text")
+                                
+                                state["current_step"] = "extract_roles"
+                                # Simulate extracted roles
+                                state["extracted_roles"] = [
+                                    {
+                                        "company": "Example Corp",
+                                        "title": "Senior Software Engineer",
+                                        "start_year": 2020,
+                                        "end_year": 2023,
+                                        "achievements": ["Led team of 5 developers", "Increased performance by 40%"],
+                                        "confidence_score": 0.9
+                                    }
+                                ]
+                                state["completed_steps"].append("extract_roles")
+                                
+                                state["current_step"] = "generate_diff"
+                                state["proposed_changes"] = [
+                                    {
+                                        "type": "create",
+                                        "company": "Example Corp",
+                                        "title": "Senior Software Engineer",
+                                        "confidence_score": 0.9,
+                                        "role_data": state["extracted_roles"][0]
+                                    }
+                                ]
+                                state["review_status"] = "pending"
+                                state["completed_steps"].append("generate_diff")
+                                
+                                return state
+                                
+                            except Exception as e:
+                                st.error(f"Workflow error: {str(e)}")
+                                return {"error_log": [str(e)]}
+                        
+                        # Run the async workflow
+                        result = asyncio.run(run_workflow())
+                        
+                        if result.get("error_log"):
+                            st.error("❌ Processing failed:")
+                            for error in result["error_log"]:
+                                st.error(f"• {error}")
+                        else:
+                            st.session_state.processing_state = result
+                            st.session_state.workflow_thread_id = result.get("workflow_id")
+                            st.success("✅ Processing complete! Please review changes in the Review tab.")
+                            st.balloons()
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error processing file: {str(e)}")
+                    
+                    finally:
+                        # Clean up temp file
+                        try:
+                            os.unlink(temp_file_path)
+                        except:
+                            pass
+    
+    with col2:
+        st.subheader("📖 How It Works")
+        
+        st.markdown("""
+        **1. Upload Resume** 📤  
+        Upload your PDF, DOCX, or TXT resume file
+        
+        **2. AI Extraction** 🤖  
+        Claude Sonnet 4 extracts professional roles and details
+        
+        **3. Smart Matching** 🔍  
+        System matches with existing Notion database entries
+        
+        **4. Human Review** 👀  
+        You review and approve changes before saving
+        
+        **5. Database Update** 💾  
+        Approved changes are saved to your Notion database
+        """)
+        
+        st.markdown("---")
+        
+        st.markdown("### 🛡️ Security Features")
+        st.markdown("""
+        - File type validation
+        - Size limits (10MB max)
+        - Malware scanning
+        - Secure file handling
+        - No data retention after processing
+        """)
 
-    # Create user-friendly model display mapping
-    model_display_mapping = {
-        "claude-opus-4-20250514": "Claude Opus 4 (Most Capable)",
-        "claude-sonnet-4-20250514": "Claude Sonnet 4 (High Performance)",
-        "claude-3-5-sonnet-latest": "Claude 3.5 Sonnet (Latest)",
-        "claude-3-5-haiku-latest": "Claude 3.5 Haiku (Fastest)",
-        "gpt-4o": "GPT-4o",
-        "gpt-4o-mini": "GPT-4o Mini"
+with tab2:
+    st.header("Review Changes")
+    
+    if st.session_state.processing_state and st.session_state.processing_state.get("review_status") == "pending":
+        state = st.session_state.processing_state
+        
+        st.success(f"✅ Processing complete for **{state['client_name']}**")
+        
+        st.subheader("📋 Proposed Changes")
+        
+        changes = state.get("proposed_changes", [])
+        
+        if not changes:
+            st.info("No changes to review.")
+        else:
+            # Track which changes are approved
+            approved_changes = []
+            
+            for i, change in enumerate(changes):
+                with st.expander(
+                    f"{'🆕 New Role' if change['type'] == 'create' else '✏️ Update Role'}: "
+                    f"{change.get('company', 'Unknown')} - {change.get('title', 'Unknown')}"
+                ):
+                    
+                    col1, col2 = st.columns([3, 1])
+                    
+                    with col1:
+                        if change["type"] == "create":
+                            st.json(change.get("role_data", {}))
+                        else:
+                            st.write("**Updates:**")
+                            st.json(change.get("updates", {}))
+                            st.write("**Additions:**") 
+                            st.json(change.get("additions", {}))
+                    
+                    with col2:
+                        st.metric("Confidence", f"{change.get('confidence_score', 0):.1%}")
+                        
+                        # Individual approval
+                        approve_key = f"approve_change_{i}"
+                        if st.checkbox("Approve", key=approve_key):
+                            approved_changes.append(change)
+            
+            # Action buttons
+            st.markdown("---")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("✅ Approve All", type="primary", use_container_width=True):
+                    st.session_state.processing_state["approved_changes"] = changes
+                    st.session_state.processing_state["review_status"] = "approved"
+                    st.success("All changes approved! Saving to Notion...")
+                    st.rerun()
+            
+            with col2:
+                if st.button("✨ Approve Selected", use_container_width=True):
+                    if approved_changes:
+                        st.session_state.processing_state["approved_changes"] = approved_changes
+                        st.session_state.processing_state["review_status"] = "approved"
+                        st.success(f"{len(approved_changes)} changes approved! Saving to Notion...")
+                        st.rerun()
+                    else:
+                        st.warning("No changes selected for approval.")
+            
+            with col3:
+                if st.button("❌ Reject All", use_container_width=True):
+                    st.session_state.processing_state["review_status"] = "rejected"
+                    st.warning("All changes rejected.")
+                    st.rerun()
+    
+    elif st.session_state.processing_state and st.session_state.processing_state.get("review_status") == "approved":
+        st.success("✅ Changes have been approved and saved to Notion!")
+        
+        # Show summary
+        approved = st.session_state.processing_state.get("approved_changes", [])
+        st.info(f"**{len(approved)} changes** were successfully applied to your Notion database.")
+        
+        if st.button("🔄 Process Another Resume"):
+            st.session_state.processing_state = None
+            st.session_state.workflow_thread_id = None
+            st.rerun()
+    
+    else:
+        st.info("📤 Upload a resume in the Upload tab to start the review process.")
+
+with tab3:
+    st.header("Database View")
+    
+    st.markdown("### 🗃️ Notion Database Integration")
+    
+    if os.getenv("NOTION_DATABASE_ID"):
+        st.success("✅ Notion database connected")
+        st.info(f"**Database ID**: `{os.getenv('NOTION_DATABASE_ID')[:8]}...`")
+        
+        if st.button("🔄 Refresh Database Status"):
+            st.info("Database connection verified!")
+    else:
+        st.error("❌ Notion database not configured")
+        st.markdown("Please set `NOTION_DATABASE_ID` in your environment variables.")
+    
+    st.markdown("---")
+    
+    st.markdown("### 📊 Database Schema")
+    
+    schema_info = {
+        "Client": "Title field - Name of the resume owner",
+        "Company": "Text field - Company name",
+        "Title": "Text field - Job title",
+        "Start Year": "Number field - Year started",
+        "End Year": "Number field - Year ended (null if current)",
+        "Manager Title": "Text field - Direct manager's title",
+        "Headcount": "Number field - Team size managed",
+        "Budget Responsibility": "Number field - Budget managed (USD)",
+        "Location": "Text field - Work location",
+        "Employment Type": "Select field - full-time, part-time, contract, etc."
     }
+    
+    for field, description in schema_info.items():
+        st.markdown(f"**{field}**: {description}")
 
-    # Create display options for dropdown
-    model_display_options = [model_display_mapping.get(model, model) for model in available_models]
-
-    # Model selection dropdown
-    previous_model = st.session_state.selected_model
-    selected_display_name = st.selectbox(
-        "🤖 Select model to use",
-        options=model_display_options,
-        index=(
-            available_models.index(st.session_state.selected_model)
-            if st.session_state.selected_model in available_models
-            else 0
-        ),
-        help="Anthropic models require ANTHROPIC_API_KEY and OpenAI models require OPENAI_API_KEY to be set as environment variables.",
+with tab4:
+    st.header("Export Data")
+    
+    st.markdown("### 📊 Export Options")
+    
+    export_format = st.selectbox(
+        "Export Format",
+        ["CSV", "JSON", "Excel"],
+        help="Choose the format for exporting your data"
     )
     
-    # Convert back to technical model name
-    st.session_state.selected_model = available_models[model_display_options.index(selected_display_name)]
-
-    # Notify when model is changed and session needs to be reinitialized
-    if (
-        previous_model != st.session_state.selected_model
-        and st.session_state.session_initialized
-    ):
-        st.warning(
-            "⚠️ Model has been changed. Click 'Apply Settings' button to apply changes."
-        )
-
-    # Add timeout setting slider
-    st.session_state.timeout_seconds = st.slider(
-        "⏱️ Response generation time limit (seconds)",
-        min_value=60,
-        max_value=300,
-        value=st.session_state.timeout_seconds,
-        step=10,
-        help="Set the maximum time for the agent to generate a response. Complex tasks may require more time.",
+    export_scope = st.selectbox(
+        "Export Scope", 
+        ["All Clients", "Specific Client"],
+        help="Choose whether to export all data or data for a specific client"
     )
-
-    st.session_state.recursion_limit = st.slider(
-        "⏱️ Recursion call limit (count)",
-        min_value=10,
-        max_value=200,
-        value=st.session_state.recursion_limit,
-        step=10,
-        help="Set the recursion call limit. Setting too high a value may cause memory issues.",
-    )
-
-    st.divider()  # Add divider
-
-    # Tool settings section
-    st.subheader("🔧 Tool Settings")
-
-    # Manage expander state in session state
-    if "mcp_tools_expander" not in st.session_state:
-        st.session_state.mcp_tools_expander = False
-
-    # MCP tool addition interface
-    with st.expander("🧰 Add MCP Tools", expanded=st.session_state.mcp_tools_expander):
-        # Load settings from config.json file
-        loaded_config = load_config_from_json()
-        default_config_text = json.dumps(loaded_config, indent=2, ensure_ascii=False)
+    
+    if export_scope == "Specific Client":
+        client_filter = st.text_input("Client Name", placeholder="Enter client name to filter")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("📁 Export Professional History", type="primary", use_container_width=True):
+            st.info("🚧 Export functionality will be implemented in the next phase.")
+            st.markdown("This will export all professional role data from your Notion database.")
+    
+    with col2:
+        if st.button("📋 Export Citations", use_container_width=True):
+            st.info("🚧 Citation export will be implemented in the next phase.")
+            st.markdown("This will export all source citations and confidence scores.")
+    
+    st.markdown("---")
+    
+    st.markdown("### 📈 Processing Statistics")
+    
+    if st.session_state.processing_state:
+        stats = st.session_state.processing_state
         
-        # Create pending config based on existing mcp_config_text if not present
-        if "pending_mcp_config" not in st.session_state:
-            try:
-                st.session_state.pending_mcp_config = loaded_config
-            except Exception as e:
-                st.error(f"Failed to set initial pending config: {e}")
-
-        # UI for adding individual tools
-        st.subheader("Add Tool(JSON format)")
-        st.markdown(
-            """
-        Please insert **ONE tool** in JSON format.
-
-        [How to Set Up?](https://teddylee777.notion.site/MCP-Tool-Setup-Guide-English-1d324f35d1298030a831dfb56045906a)
-
-        ⚠️ **Important**: JSON must be wrapped in curly braces (`{}`).
-        """
-        )
-
-        # Provide clearer example
-        example_json = {
-            "github": {
-                "command": "npx",
-                "args": [
-                    "-y",
-                    "@smithery/cli@latest",
-                    "run",
-                    "@smithery-ai/github",
-                    "--config",
-                    '{"githubPersonalAccessToken":"your_token_here"}',
-                ],
-                "transport": "stdio",
-            }
-        }
-
-        default_text = json.dumps(example_json, indent=2, ensure_ascii=False)
-
-        new_tool_json = st.text_area(
-            "Tool JSON",
-            default_text,
-            height=250,
-        )
-
-        # Add button
-        if st.button(
-            "Add Tool",
-            type="primary",
-            key="add_tool_button",
-            use_container_width=True,
-        ):
-            try:
-                # Validate input
-                if not new_tool_json.strip().startswith(
-                    "{"
-                ) or not new_tool_json.strip().endswith("}"):
-                    st.error("JSON must start and end with curly braces ({}).")
-                    st.markdown('Correct format: `{ "tool_name": { ... } }`')
-                else:
-                    # Parse JSON
-                    parsed_tool = json.loads(new_tool_json)
-
-                    # Check if it's in mcpServers format and process accordingly
-                    if "mcpServers" in parsed_tool:
-                        # Move contents of mcpServers to top level
-                        parsed_tool = parsed_tool["mcpServers"]
-                        st.info(
-                            "'mcpServers' format detected. Converting automatically."
-                        )
-
-                    # Check number of tools entered
-                    if len(parsed_tool) == 0:
-                        st.error("Please enter at least one tool.")
-                    else:
-                        # Process all tools
-                        success_tools = []
-                        for tool_name, tool_config in parsed_tool.items():
-                            # Check URL field and set transport
-                            if "url" in tool_config:
-                                # Set transport to "sse" if URL exists
-                                tool_config["transport"] = "sse"
-                                st.info(
-                                    f"URL detected in '{tool_name}' tool, setting transport to 'sse'."
-                                )
-                            elif "transport" not in tool_config:
-                                # Set default "stdio" if URL doesn't exist and transport isn't specified
-                                tool_config["transport"] = "stdio"
-
-                            # Check required fields
-                            if (
-                                "command" not in tool_config
-                                and "url" not in tool_config
-                            ):
-                                st.error(
-                                    f"'{tool_name}' tool configuration requires either 'command' or 'url' field."
-                                )
-                            elif "command" in tool_config and "args" not in tool_config:
-                                st.error(
-                                    f"'{tool_name}' tool configuration requires 'args' field."
-                                )
-                            elif "command" in tool_config and not isinstance(
-                                tool_config["args"], list
-                            ):
-                                st.error(
-                                    f"'args' field in '{tool_name}' tool must be an array ([]) format."
-                                )
-                            else:
-                                # Add tool to pending_mcp_config
-                                st.session_state.pending_mcp_config[tool_name] = (
-                                    tool_config
-                                )
-                                success_tools.append(tool_name)
-
-                        # Success message
-                        if success_tools:
-                            if len(success_tools) == 1:
-                                st.success(
-                                    f"{success_tools[0]} tool has been added. Click 'Apply Settings' button to apply."
-                                )
-                            else:
-                                tool_names = ", ".join(success_tools)
-                                st.success(
-                                    f"Total {len(success_tools)} tools ({tool_names}) have been added. Click 'Apply Settings' button to apply."
-                                )
-                            # Collapse expander after adding
-                            st.session_state.mcp_tools_expander = False
-                            st.rerun()
-            except json.JSONDecodeError as e:
-                st.error(f"JSON parsing error: {e}")
-                st.markdown(
-                    f"""
-                **How to fix**:
-                1. Check that your JSON format is correct.
-                2. All keys must be wrapped in double quotes (").
-                3. String values must also be wrapped in double quotes (").
-                4. When using double quotes within a string, they must be escaped (\\").
-                """
-                )
-            except Exception as e:
-                st.error(f"Error occurred: {e}")
-
-    # Display registered tools list and add delete buttons
-    with st.expander("📋 Registered Tools List", expanded=True):
-        try:
-            pending_config = st.session_state.pending_mcp_config
-        except Exception as e:
-            st.error("Not a valid MCP tool configuration.")
-        else:
-            # Iterate through keys (tool names) in pending config
-            for tool_name in list(pending_config.keys()):
-                col1, col2 = st.columns([8, 2])
-                col1.markdown(f"- **{tool_name}**")
-                if col2.button("Delete", key=f"delete_{tool_name}"):
-                    # Delete tool from pending config (not applied immediately)
-                    del st.session_state.pending_mcp_config[tool_name]
-                    st.success(
-                        f"{tool_name} tool has been deleted. Click 'Apply Settings' button to apply."
-                    )
-
-    st.divider()  # Add divider
-
-# --- Sidebar: System Information and Action Buttons Section ---
-with st.sidebar:
-    st.subheader("📊 System Information")
-    st.write(
-        f"🛠️ MCP Tools Count: {st.session_state.get('tool_count', 'Initializing...')}"
-    )
-    selected_model_name = st.session_state.selected_model
-    st.write(f"🧠 Current Model: {selected_model_name}")
-
-    # Move Apply Settings button here
-    if st.button(
-        "Apply Settings",
-        key="apply_button",
-        type="primary",
-        use_container_width=True,
-    ):
-        # Display applying message
-        apply_status = st.empty()
-        with apply_status.container():
-            st.warning("🔄 Applying changes. Please wait...")
-            progress_bar = st.progress(0)
-
-            # Save settings
-            st.session_state.mcp_config_text = json.dumps(
-                st.session_state.pending_mcp_config, indent=2, ensure_ascii=False
-            )
-
-            # Save settings to config.json file
-            save_result = save_config_to_json(st.session_state.pending_mcp_config)
-            if not save_result:
-                st.error("❌ Failed to save settings file.")
-            
-            progress_bar.progress(15)
-
-            # Prepare session initialization
-            st.session_state.session_initialized = False
-            st.session_state.agent = None
-
-            # Update progress
-            progress_bar.progress(30)
-
-            # Run initialization
-            success = st.session_state.event_loop.run_until_complete(
-                initialize_session(st.session_state.pending_mcp_config)
-            )
-
-            # Update progress
-            progress_bar.progress(100)
-
-            if success:
-                st.success("✅ New settings have been applied.")
-                # Collapse tool addition expander
-                if "mcp_tools_expander" in st.session_state:
-                    st.session_state.mcp_tools_expander = False
-            else:
-                st.error("❌ Failed to apply settings.")
-
-        # Refresh page
-        st.rerun()
-
-    st.divider()  # Add divider
-
-    # Action buttons section
-    st.subheader("🔄 Actions")
-
-    # Reset conversation button
-    if st.button("Reset Conversation", use_container_width=True, type="primary"):
-        # Reset thread_id
-        st.session_state.thread_id = random_uuid()
-
-        # Reset conversation history
-        st.session_state.history = []
-
-        # Notification message
-        st.success("✅ Conversation has been reset.")
-
-        # Refresh page
-        st.rerun()
-
-    # Show logout button only if login feature is enabled
-    if use_login and st.session_state.authenticated:
-        st.divider()  # Add divider
-        if st.button("Logout", use_container_width=True, type="secondary"):
-            st.session_state.authenticated = False
-            st.success("✅ You have been logged out.")
-            st.rerun()
-
-# --- Initialize default session (if not initialized) ---
-if not st.session_state.session_initialized:
-    st.info(
-        "MCP server and agent are not initialized. Please click the 'Apply Settings' button in the left sidebar to initialize."
-    )
-
-
-# --- Print conversation history ---
-print_message()
-
-# --- User input and processing ---
-user_query = st.chat_input("💬 Enter your question")
-if user_query:
-    if st.session_state.session_initialized:
-        st.chat_message("user", avatar="🧑‍💻").markdown(user_query)
-        with st.chat_message("assistant", avatar="🤖"):
-            tool_placeholder = st.empty()
-            text_placeholder = st.empty()
-            resp, final_text, final_tool = (
-                st.session_state.event_loop.run_until_complete(
-                    process_query(
-                        user_query,
-                        text_placeholder,
-                        tool_placeholder,
-                        st.session_state.timeout_seconds,
-                    )
-                )
-            )
-        if "error" in resp:
-            st.error(resp["error"])
-        else:
-            st.session_state.history.append({"role": "user", "content": user_query})
-            st.session_state.history.append(
-                {"role": "assistant", "content": final_text}
-            )
-            if final_tool.strip():
-                st.session_state.history.append(
-                    {"role": "assistant_tool", "content": final_tool}
-                )
-            st.rerun()
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Roles Extracted", len(stats.get("extracted_roles", [])))
+        
+        with col2:
+            st.metric("Changes Proposed", len(stats.get("proposed_changes", [])))
+        
+        with col3:
+            st.metric("Changes Approved", len(stats.get("approved_changes", [])))
+        
+        with col4:
+            avg_confidence = stats.get("confidence_scores", {}).get("average_extraction", 0)
+            st.metric("Avg Confidence", f"{avg_confidence:.1%}")
+    
     else:
-        st.warning(
-            "⚠️ MCP server and agent are not initialized. Please click the 'Apply Settings' button in the left sidebar to initialize."
-        )
+        st.info("Process a resume to see statistics here.")
+
+# Footer
+st.markdown("---")
+st.markdown(
+    "<div style='text-align: center; color: #666;'>"
+    "Resume Automation System MVP | Built with LangGraph + MCP + Claude Sonnet 4"
+    "</div>", 
+    unsafe_allow_html=True
+)

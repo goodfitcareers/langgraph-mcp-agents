@@ -1,21 +1,29 @@
 [project]
-name = "langgraph-mcp-agents"
+name = "resume-automation-system"
 version = "0.1.0"
-description = "LangGraph Agent with MCP Adapters"
+description = "Resume Automation System - AI-powered professional history extraction and Notion integration"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "nest-asyncio>=1.6.0",
-    "faiss-cpu>=1.10.0",
-    "jupyter>=1.1.1",
     "langchain-anthropic>=0.3.10",
     "langchain-community>=0.3.20",
     "langchain-mcp-adapters>=0.0.7",
-    "langchain-openai>=0.3.11",
     "langgraph>=0.3.21",
     "mcp[cli]>=1.6.0",
-    "notebook>=7.3.3",
-    "pymupdf>=1.25.4",
     "python-dotenv>=1.1.0",
     "streamlit>=1.44.1",
+    "PyPDF2>=3.0.1",
+    "python-docx>=0.8.11",
+    "python-magic>=0.4.27",
+    "python-magic-bin>=0.4.14",
+    "notion-client>=2.2.1",
+    "psycopg2-binary>=2.9.7",
+    "sqlalchemy>=2.0.23",
+    "fuzzywuzzy>=0.18.0",
+    "python-Levenshtein>=0.21.1",
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.2",
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
 ]

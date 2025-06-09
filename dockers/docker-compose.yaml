@@ -1,34 +1,50 @@
+version: '3.8'
 services:
   app:
     build:
-      context: .
+      context: ..
       dockerfile: Dockerfile
-      args:
-        BUILDPLATFORM: ${BUILDPLATFORM:-linux/amd64}
-        TARGETPLATFORM: ${TARGETPLATFORM:-linux/amd64}
-    image: teddylee777/langgraph-mcp-agents:0.2.1
-    platform: ${TARGETPLATFORM:-linux/amd64}
+    image: resume-automation-system:latest
+    platform: linux/amd64
     ports:
-      - "8585:8585"
-    volumes:
-      # Optionally, you can remove this volume if you don’t need the file at runtime
-      - ./.env:/app/.env:ro
-      - ./data:/app/data:rw
-      - ./config.json:/app/config.json
-    env_file:
-      - ./.env
+      - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
-      - USE_LOGIN=${USE_LOGIN:-false}
-      - USER_ID=${USER_ID:-}
-      - USER_PASSWORD=${USER_PASSWORD:-}
+      - PORT=8000
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - NODE_OPTIONS=${NODE_OPTIONS:-}
+      - NOTION_TOKEN=${NOTION_TOKEN}
+      - NOTION_DATABASE_ID=${NOTION_DATABASE_ID}
+      - USE_LOGIN=${USE_LOGIN:-false}
+      - USER_ID=${USER_ID:-admin}
+      - USER_PASSWORD=${USER_PASSWORD:-admin123}
+      - DEBUG=${DEBUG:-false}
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-10}
+    volumes:
+      - ../.env:/app/.env:ro
+      - ../uploads:/app/uploads:rw
+      - ../quarantine:/app/quarantine:rw
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8585/_stcore/health"]
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/_stcore/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  # Optional: PostgreSQL for citation tracking (future enhancement)
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: resume_db
+      POSTGRES_USER: resume_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-resume_pass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    profiles:
+      - full  # Only start with --profile full
+
+volumes:
+  postgres_data:
