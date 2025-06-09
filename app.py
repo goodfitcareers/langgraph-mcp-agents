@@ -22,8 +22,8 @@ from dotenv import load_dotenv
 from workflow.pipeline import ResumeProcessingWorkflow
 from components.upload_ui import render_upload_tab
 from components.review_ui import render_review_tab
-# from components.database_ui import render_database_tab # For future
-# from components.export_ui import render_export_tab # For future
+from components.database_ui import render_database_tab
+from components.export_ui import render_export_tab
 
 
 # Load environment variables (get API keys and settings from .env file)
@@ -163,16 +163,17 @@ with tab_review:
     #    render_review_tab(st.session_state.latest_workflow_run, workflow_manager) # Pass workflow_manager
 
 with tab_database:
-    st.header("View Notion Database")
-    st.write("This section will provide a way to view and interact with the professional history data stored in the Notion database.")
-    st.info("🚧 Feature under construction.")
-    # Example: render_database_tab()
+    if workflow_manager: # Though workflow_manager might not be directly used if database_ui is self-contained
+        render_database_tab(workflow_manager)
+    else:
+        st.error("Workflow manager is not available. Database view functionality may be limited.")
+
 
 with tab_export:
-    st.header("Export Data")
-    st.write("This section will allow users to export processed data in various formats (e.g., CSV, JSON).")
-    st.info("🚧 Feature under construction.")
-    # Example: render_export_tab()
+    if workflow_manager: # Though workflow_manager might not be directly used
+        render_export_tab(workflow_manager)
+    else:
+        st.error("Workflow manager is not available. Export functionality may be limited.")
 
 
 # --- Cleanup of old UI elements ---

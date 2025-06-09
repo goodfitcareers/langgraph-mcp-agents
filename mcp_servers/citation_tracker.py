@@ -245,6 +245,34 @@ async def get_citations_for_notion_page(notion_page_id: str) -> Dict[str, Any]:
         print(f"[CitationTracker] {error_msg}")
         return {"error": error_msg, "status": "failure", "citations": []}
 
+@mcp.tool()
+async def get_all_citations() -> Dict[str, Any]:
+    """Retrieves all citations from the database."""
+    print(f"[CitationTracker] Received get_all_citations request.")
+    if not psycopg2 or not DATABASE_URL:
+        return {"error": "Database support not available.", "status": "failure", "citations": []}
+
+    query_sql = "SELECT * FROM citations ORDER BY timestamp DESC;" # Order by most recent
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute(query_sql)
+                rows = cur.fetchall()
+
+        citations = [_map_row_to_citation(dict(row)) for row in rows]
+        print(f"[CitationTracker] Found {len(citations)} total citations.")
+        return {"citations": citations, "status": "success"}
+    except ConnectionError as e:
+        return {"error": f"Database connection error: {e}", "status": "failure", "citations": []}
+    except psycopg2.Error as e:
+        error_msg = f"Database error retrieving all citations: {e}"
+        print(f"[CitationTracker] {error_msg}")
+        return {"error": error_msg, "status": "failure", "citations": []}
+    except Exception as e:
+        error_msg = f"Unexpected error retrieving all citations: {e}"
+        print(f"[CitationTracker] {error_msg}")
+        return {"error": error_msg, "status": "failure", "citations": []}
+
 
 if __name__ == "__main__":
     print("Citation Tracker MCP Server starting...")
@@ -268,22 +296,19 @@ if __name__ == "__main__":
     #     test_location = {"document_id": "doc_abc", "page_number": 1, "paragraph_number": 3}
     #     track_result = await track_extraction(
     #         source_document_fingerprint=test_doc_fingerprint,
-    #         original_extracted_text="This is a test fact.",
+    #         original_extracted_text="This is a test fact for get_all.",
     #         document_location=test_location,
-    #         notion_page_id="notion_page_test_1",
+    #         notion_page_id="notion_page_test_get_all",
     #         notion_field_name="achievements"
     #     )
     #     print(f"Track Result: {track_result}")
-    #     citation_id_to_query = track_result.get("citation_id")
 
     #     if track_result["status"] == "success":
-    #         print("\n--- Testing get_citations_for_document ---")
-    #         doc_citations_result = await get_citations_for_document(source_document_fingerprint=test_doc_fingerprint)
-    #         print(f"Doc Citations Result: {json.dumps(doc_citations_result, indent=2)}")
+    #         print("\n--- Testing get_all_citations ---")
+    #         all_citations_result = await get_all_citations()
+    #         print(f"All Citations Result (first 5): {json.dumps(all_citations_result.get('citations', [])[:5], indent=2)}")
+    #         print(f"Total citations fetched: {len(all_citations_result.get('citations', []))}")
 
-    #         print("\n--- Testing get_citations_for_notion_page ---")
-    #         notion_citations_result = await get_citations_for_notion_page(notion_page_id="notion_page_test_1")
-    #         print(f"Notion Citations Result: {json.dumps(notion_citations_result, indent=2)}")
 
     # if os.getenv("DATABASE_URL"):
     #    import asyncio
