@@ -10,4 +10,5 @@ notebook>=7.3.3
 pymupdf>=1.25.4
 python-dotenv>=1.1.0
 streamlit>=1.44.1 
-nest-asyncio>=1.6.0
+nest-asyncio>=1.6.0PyPDF2>=3.0.1
+python-docx>=0.8.11
